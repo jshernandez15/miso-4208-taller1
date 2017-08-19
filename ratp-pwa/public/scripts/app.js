@@ -1,6 +1,13 @@
 (function () {
     'use strict';
 
+    window.IDBTransaction = window.IDBTransaction || window.webkitIDBTransaction || window.msIDBTransaction;
+    window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange
+
+    if (!window.indexedDB) {
+        window.alert("Your browser doesn't support a stable version of IndexedDB.")
+    }
+
     var app = {
         isLoading: true,
         visibleCards: {},
@@ -104,9 +111,46 @@
     };
 
     app.saveSelectedTimetables = function() {
-        var selectedTimetables = JSON.stringify(app.selectedTimetables);
-        localStorage.selectedTimetables = selectedTimetables;
+
+        for (var i in app.selectedTimetables) {
+
+            var request = db.transaction(["timetables"], "readwrite")
+                .objectStore("timetables")
+                .add(app.selectedTimetables[i]);
+
+            request.onsuccess = function(event) {
+              console.log("time table " + i + " stored on IndexedDB.");
+            };
+
+            request.onerror = function(event) {
+              console.log("Unable to store time table " + i + " on IndexedDB, it's already on the database");
+            }
+
+        }
+
     };
+
+    app.readSelectedTimeTables = function(callback) {
+        app.selectedTimetables = [];
+        try{
+            var objectStore = db.transaction("timetables").objectStore("timetables");
+            objectStore.openCursor().onsuccess = function(event) {
+                var cursor = event.target.result;
+
+                if (cursor) {
+                    app.selectedTimetables.push(cursor.value);
+                    cursor.continue();
+                }
+                else {
+                    console.log("No more entries reading from IndexedDB!");
+                    callback();
+                }
+            };
+        }
+        catch(e){
+            console.log("First load, there's no data to read");
+        }
+    }
 
     /*****************************************************************************
      *
@@ -189,40 +233,50 @@
     };
 
 
-    /************************************************************************
-     *
-     * Code required to start the app
-     *
-     * NOTE: To simplify this codelab, we've used localStorage.
-     *   localStorage is a synchronous API and has serious performance
-     *   implications. It should not be used in production applications!
-     *   Instead, check out IDB (https://www.npmjs.com/package/idb) or
-     *   SimpleDB (https://gist.github.com/inexorabletash/c8069c042b734519680c)
-     ************************************************************************/
-
     app.getSchedule('metros/1/bastille/A', 'Bastille, Direction La Défense');
     app.selectedTimetables = [
         {key: initialStationTimetable.key, label: initialStationTimetable.label}
     ];
 
+    var db;
+    var request = window.indexedDB.open("timetables", 1);
 
-    app.selectedTimetables = localStorage.selectedTimetables;
-    if (app.selectedTimetables) {
-        app.selectedTimetables = JSON.parse(app.selectedTimetables);
-        app.selectedTimetables.forEach(function(timeTable) {
-            app.getSchedule(timeTable.key, timeTable.label);
+    request.onerror = function(event) {
+        console.log("error: ");
+    };
+
+    request.onsuccess = function(event) {
+        db = request.result;
+        console.log("success: "+ db);
+        app.readSelectedTimeTables(function(){
+            if (app.selectedTimetables) {
+                app.selectedTimetables.forEach(function(timeTable) {
+                    app.getSchedule(timeTable.key, timeTable.label);
+                });
+            } else {
+                app.updateTimetableCard(initialStationTimetable);
+                app.selectedTimetables = [
+                {key: initialStationTimetable.key, label: initialStationTimetable.label}
+                ];
+                app.saveSelectedTimetables();
+            }
         });
-    } else {
-        app.updateTimetableCard(initialStationTimetable);
-        app.selectedTimetables = [
-        {key: initialStationTimetable.key, label: initialStationTimetable.label}
-        ];
-        app.saveSelectedTimetables();
+    };
+
+    request.onupgradeneeded = function(event) {
+        console.log("IndexedDB: creating object store");
+        var db = event.target.result;
+        var objectStore = db.createObjectStore("timetables", {keyPath: "key"});
+
+        for (var i in app.selectedTimetables) {
+            objectStore.add(app.selectedTimetables[i]);
+        }
+        console.log("IndexedDB: object store created");
     }
 
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker
-            .register('./worker.js')
+            .register('./service-worker.js')
             .then(function() {
                 console.log('Service Worker Registered'); 
             });
